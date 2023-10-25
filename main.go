@@ -1,23 +1,28 @@
+// Package main is the entry point, containing the main function
 package main
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
 )
 
+// TxInfoLog represents Log data in a transaction.
 type TxInfoLog struct {
 	MsgIndex uint64        `json:"msg_index"`
 	Log      string        `json:"log"`
 	Events   []TxInfoEvent `json:"events"`
 }
 
+// TxInfoAttribute represents an attribute within a Log item.
 type TxInfoAttribute struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
 }
 
+// TxInfoEvent represents an Event within a Log item.
 type TxInfoEvent struct {
 	Type       string            `json:"type"`
 	Attributes []TxInfoAttribute `json:"attributes"`
