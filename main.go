@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	_ "github.com/lib/pq"
 	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
 	"github.com/tendermint/tendermint/rpc/coretypes"
 )
@@ -21,8 +23,10 @@ const (
 	baseDenom    = "uosmo"
 	targetPoolID = "1133"
 	rpcURL       = "https://rpc.margined.io:443"
-	query        = "token_swapped.module = 'gamm' AND tx.height > 12227140 AND token_swapped.pool_id = 1133"
+	query        = "token_swapped.module = 'gamm' AND tx.height > 12227140 AND token_swapped.pool_id = 1267"
 )
+
+var db *sql.DB
 
 // TxInfoLog represents Log data in a transaction.
 type TxInfoLog struct {
@@ -57,6 +61,18 @@ func extractNumericValue(token string) (float64, error) {
 	}
 
 	return value, nil
+}
+
+func initDB() error {
+	var err error
+	// Replace with your database connection information
+	connStr := "user=postgres dbname=margined_osmosis_1 sslmode=disable password=mypassword"
+	db, err = sql.Open("postgres", connStr)
+	if err != nil {
+		return err
+	}
+
+	return db.Ping() // Ensure the connection is alive
 }
 
 func calculateSpotPrice(baseValue, quoteValue float64) (string, error) {
@@ -163,6 +179,14 @@ func processTransaction(tx *coretypes.ResultTx, c *rpchttp.HTTP) {
 						continue
 					}
 
+					_, err = db.Exec(`INSERT INTO base_gamm_pool (pool_id, quote, base, spot_price, timestamp, block_height) VALUES ($1, $2, $3, $4, $5, $6)`,
+						poolId, quote, base, spotPrice, block.Block.Time.Unix(), block.Block.Height)
+					if err != nil {
+						log.Printf("Error inserting data into database: %v", err)
+					} else {
+						log.Printf("Data inserted for pool ID: %s\n", poolId)
+					}
+
 					log.Printf("Height: %d\n", block.Block.Height)
 					log.Printf("Unix Time: %d\n", block.Block.Time.Unix())
 					log.Printf("Sender: %s\n", sender)
@@ -182,10 +206,16 @@ func main() {
 		log.Fatalf("Failed to create RPC client: %v", err)
 	}
 
+	err = initDB()
+	if err != nil {
+		log.Fatalf("Failed to initialize the database: %v", err)
+	}
+	defer db.Close()
+
 	// Use a WaitGroup to wait for all goroutines to complete.
 	var wg sync.WaitGroup
 	page := 1
-	perPage := 20
+	perPage := 1
 	var totalPages int // Used to capture the total pages after the first fetch
 
 	// Use a channel to limit the number of concurrent goroutines.
