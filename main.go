@@ -5,8 +5,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
 
 	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
+)
+
+const (
+	baseDenom    = "uosmo"
+	targetPoolID = "1133"
+	rpcURL       = "https://rpc.margined.io:443"
+	query        = "token_swapped.module = 'gamm' AND tx.height > 12227140 AND token_swapped.pool_id = 1133"
 )
 
 // TxInfoLog represents Log data in a transaction.
@@ -28,8 +38,35 @@ type TxInfoEvent struct {
 	Attributes []TxInfoAttribute `json:"attributes"`
 }
 
+func extractNumericValue(token string) (float64, error) {
+	re := regexp.MustCompile(`\d+`)
+	matches := re.FindAllString(token, -1)
+
+	if len(matches) == 0 {
+		return 0, fmt.Errorf("no numeric value found in token")
+	}
+
+	value, err := strconv.ParseFloat(matches[0], 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse numeric value: %v", err)
+	}
+
+	return value, nil
+}
+
+func calculateSpotPrice(baseValue, quoteValue float64) (string, error) {
+	if baseValue == 0 {
+		return "", fmt.Errorf("base value is zero, cannot calculate spot price")
+	}
+
+	spotPrice := quoteValue / baseValue
+
+	// Format to 6 decimal places
+	return fmt.Sprintf("%.6f", spotPrice), nil
+}
+
 func main() {
-	c, err := rpchttp.New("https://rpc.margined.io:443")
+	c, err := rpchttp.New(rpcURL)
 	if err != nil {
 		panic(err)
 	}
@@ -38,8 +75,7 @@ func main() {
 	perPage := 10
 
 	for {
-		result, err := c.TxSearch(context.Background(),
-			"wasm-apply_funding._contract_address = 'osmo1cnj84q49sp4sd3tsacdw9p4zvyd8y46f2248ndq2edve3fqa8krs9jds9g'", true, &page, &perPage, "asc")
+		result, err := c.TxSearch(context.Background(), query, true, &page, &perPage, "asc")
 		if err != nil {
 			panic(err)
 		}
@@ -57,19 +93,65 @@ func main() {
 
 			for _, log := range *rawLogParsed {
 				for _, event := range log.Events {
-					if event.Type == "wasm-apply_funding" {
+					if event.Type == "token_swapped" {
+						var tokensIn, tokensOut, poolId, sender string
+						var quote, base float64
+						captureNextTokens := false
+						var isBuy bool = true
+
 						for _, attr := range event.Attributes {
-							if attr.Key == "funding_rate" {
-								// Process data to PostgreSQL here, doing an upsert
-								fmt.Printf("Height: %+v\n", tx.Height)
-								fmt.Printf("Time: %+v\n", block.Block.Time)
-								fmt.Printf("Funding Rate: %s\n", attr.Value)
+							if attr.Key == "sender" {
+								sender = attr.Value
+							} else if captureNextTokens {
+								if attr.Key == "tokens_in" {
+									if strings.Contains(attr.Value, "uosmo") {
+										isBuy = false
+									}
+									tokensIn = attr.Value
+								} else if attr.Key == "tokens_out" {
+									tokensOut = attr.Value
+									break
+								}
+							} else if attr.Key == "pool_id" && attr.Value == targetPoolID {
+								poolId = attr.Value
+								captureNextTokens = true
 							}
 						}
+
+						tokensInNumeric, err := extractNumericValue(tokensIn)
+						if err != nil {
+							panic(err)
+						}
+
+						tokensOutNumeric, err := extractNumericValue(tokensOut)
+						if err != nil {
+							panic(err)
+						}
+
+						if isBuy {
+							quote = tokensInNumeric
+							base = tokensOutNumeric
+						} else {
+							quote = tokensOutNumeric
+							base = tokensInNumeric
+						}
+
+						spotPrice, err := calculateSpotPrice(base, quote)
+						if err != nil {
+							panic(err)
+						}
+
+						fmt.Printf("Height: %d\n", block.Block.Height)
+						fmt.Printf("Unix Time: %d\n", block.Block.Time.Unix())
+						fmt.Printf("Sender: %s\n", sender)
+						fmt.Printf("Tokens In: %f\n", tokensInNumeric)
+						fmt.Printf("Tokens Out: %f\n", tokensOutNumeric)
+						fmt.Printf("Spot Price: %s\n", spotPrice)
+						fmt.Printf("Pool id: %s\n", poolId)
+						fmt.Printf("\n")
 					}
 				}
 			}
-
 		}
 
 		// If there are no more pages, exit the loop
