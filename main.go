@@ -1,3 +1,4 @@
+// package main provides a tx search for osmosis
 package main
 
 import (
@@ -119,9 +120,9 @@ func processTransaction(tx *coretypes.ResultTx, c *rpchttp.HTTP) {
 	for _, txLog := range *rawLogParsed {
 		for _, event := range txLog.Events {
 			if event.Type == "token_swapped" {
-				var tokensIn, tokensOut, poolId, sender string
+				var tokensIn, tokensOut, poolID, sender string
 				var quote, base float64
-				var isBuy bool = true
+				var isBuy bool
 
 				captureNextTokens := false
 
@@ -131,7 +132,7 @@ func processTransaction(tx *coretypes.ResultTx, c *rpchttp.HTTP) {
 					} else if attr.Key == "pool_id" {
 						if attr.Value == targetPoolID {
 							// Flag that the next tokens_in and tokens_out should be captured.
-							poolId = attr.Value
+							poolID = attr.Value
 							captureNextTokens = true
 						} else {
 							// Reset the flag if we encounter a pool_id that is not the target.
@@ -152,7 +153,7 @@ func processTransaction(tx *coretypes.ResultTx, c *rpchttp.HTTP) {
 				}
 
 				// Continue only if both tokens_in and tokens_out are found for the target poolId
-				if poolId == targetPoolID && tokensIn != "" && tokensOut != "" {
+				if poolID == targetPoolID && tokensIn != "" && tokensOut != "" {
 					tokensInNumeric, err := extractNumericValue(tokensIn)
 					if err != nil {
 						log.Printf("Error parsing tokens_in numeric value: %v", err)
@@ -180,11 +181,11 @@ func processTransaction(tx *coretypes.ResultTx, c *rpchttp.HTTP) {
 					}
 
 					_, err = db.Exec(`INSERT INTO base_gamm_pool (pool_id, quote, base, spot_price, timestamp, block_height) VALUES ($1, $2, $3, $4, $5, $6)`,
-						poolId, quote, base, spotPrice, block.Block.Time.Unix(), block.Block.Height)
+						poolID, quote, base, spotPrice, block.Block.Time.Unix(), block.Block.Height)
 					if err != nil {
 						log.Printf("Error inserting data into database: %v", err)
 					} else {
-						log.Printf("Data inserted for pool ID: %s\n", poolId)
+						log.Printf("Data inserted for pool ID: %s\n", poolID)
 					}
 
 					log.Printf("Height: %d\n", block.Block.Height)
@@ -193,7 +194,7 @@ func processTransaction(tx *coretypes.ResultTx, c *rpchttp.HTTP) {
 					log.Printf("Tokens In: %f\n", tokensInNumeric)
 					log.Printf("Tokens Out: %f\n", tokensOutNumeric)
 					log.Printf("Spot Price: %s\n", spotPrice)
-					log.Printf("Pool ID: %s\n", poolId)
+					log.Printf("Pool ID: %s\n", poolID)
 				}
 			}
 		}
